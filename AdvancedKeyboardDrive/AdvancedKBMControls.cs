@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Reflection;
+using System.Collections.Generic;
 using MSCLoader;
 using UnityEngine;
 using Harmony;
@@ -12,7 +13,7 @@ namespace AdvancedKBMControls
         public override string ID => "AdvancedKBMControls"; //Your mod ID (unique)
         public override string Name => "Advanced KB&M Controls"; //You mod name
         public override string Author => "cbethax"; //Your Username
-        public override string Version => "1.0.1"; //Version
+        public override string Version => "1.2.1"; //Version
         public override bool UseAssetsFolder => false;
 
         readonly Keybind disableSteerKey = new Keybind("DisableSteer", "Disable Steer", KeyCode.LeftControl);
@@ -49,12 +50,17 @@ namespace AdvancedKBMControls
         public static Settings keyboardHShifter;
         public static Settings enableAdvancedKeys;
         public static Settings enableStickyKeys;
+        public static Settings smoothThrottle;
+        public static Settings smoothBrake;
         public static Settings enableClutch;
         public static Settings enableClutchSticky;
+        public static Settings smoothClutch;
 
         public static Settings[] throttleSettings = new Settings[5];
         public static Settings[] brakeSettings = new Settings[5];
         public static Settings[] clutchSettings = new Settings[5];
+
+        public static Settings addCurrentCarButton;
 
         GameObject player;
         GameObject fpsCameraParent;
@@ -64,7 +70,7 @@ namespace AdvancedKBMControls
         AxisCarController axisCarController;
         Drivetrain drivetrain;
 
-        MonoBehaviour mouseLookX;
+        MouseLook mouseLookX;
         MouseLook mouseLookY;
 
         public static bool isDriveModeActive = false;
@@ -94,20 +100,29 @@ namespace AdvancedKBMControls
         GameObject guiClutch;
         GameObject guiClutchBar;
 
+        public static List<string> enabledCars = new List<string> { "SATSUMA(557kg, 248)", "RCO_RUSCKO12(270)", "KEKMET(350-400psi)", "GIFU(750/450psi)", "HAYOSIKO(1500kg, 250)", "FERNDALE(1630kg)", "JONNEZ ES(Clone)", "SECONDFERNDALE(1630kg)", "TangerinePickup(Clone)" };
+
+        public static List<string> additionalCars = new List<string>();
+
+        public static string saveFile = "Mod_Advanced_KBM.txt?tag=additionalcars";
+
         public AdvancedKBMControls()
         {
             enableGUI = new Settings("enableGUI", "Enable GUI", true, () => ApplySettings());
             enableMouseSteer = new Settings("enableMouseSteer", "Enable Mouse Steering", true, () => ApplySettings());
             centerMouseOnEnable = new Settings("centerMouseOnEnable", "Reset Camera On Enable", true, () => ApplySettings());
-            steeringSensitivity = new Settings("steeringSensitivity", "Steering Sensitivity", 50f, () => ApplySettings());
+            steeringSensitivity = new Settings("steeringSensitivity_1.1.2", "Steering Sensitivity", 25f, () => ApplySettings());
             keyboardHShifter = new Settings("keyboardHShifter", "Keyboard H-Shifter", false, () => ApplySettings());
             enableAdvancedKeys = new Settings("enableAdvancedKeys", "Enable Advanced Throttle/Brake", true, () => ApplySettings());
             enableStickyKeys = new Settings("enableStickyKeys", "Enable Sticky Throttle/Brake", false, () => ApplySettings());
+            smoothThrottle = new Settings("smoothThrottle", "Smooth Throttle", 0.2f, () => ApplySettings());
+            smoothBrake = new Settings("smoothBrake", "Smooth Brake", 0.2f, () => ApplySettings());
             enableClutch = new Settings("enableClutch", "Enable Advanced Clutch", false, () => ApplySettings());
             enableClutchSticky = new Settings("enableClutchSticky", "Enable Sticky Clutch", true, () => ApplySettings());
+            smoothClutch = new Settings("smoothClutch", "Smooth Clutch", 0.2f, () => ApplySettings());
 
             float[] brakeSlices = new float[] { 10f, 20f, 50f, 80f, 100f };
-            float[] clutchSlices = new float[] { 20f, 50f, 80f, 90f, 100f };
+            float[] clutchSlices = new float[] { 40f, 60f, 75f, 85f, 100f };
 
             for (int i = 0; i < throttleSettings.Length; i++)
             {
@@ -117,6 +132,8 @@ namespace AdvancedKBMControls
                 brakeSettings[i] = new Settings("brake" + di, "Brake #" + di, brakeSlices[i], () => ApplySettings());
                 clutchSettings[i] = new Settings("clutch" + di, "Clutch #" + di, clutchSlices[i], () => ApplySettings());
             }
+
+            addCurrentCarButton = new Settings("addCurrentCar", "Add Current Vehicle", () => AddCurrentCar());
         }
 
         public override void OnLoad()
@@ -127,53 +144,28 @@ namespace AdvancedKBMControls
             player = GameObject.Find("PLAYER");
             fpsCameraParent = GameObject.Find("PLAYER/Pivot/AnimPivot/Camera/FPSCamera");
             crosshair = GameObject.Find("GUI/Icons/GUITexture");
+            
+            mouseLookX = player.gameObject.GetComponent<MouseLook>();
+            mouseLookY = fpsCameraParent.gameObject.GetComponent<MouseLook>();
 
-            UnityEngine.Object.Destroy(FindMouseLook(fpsCameraParent));
-
-            mouseLookX = FindMouseLook(player);
-
-            mouseLookY = fpsCameraParent.AddComponent<MouseLook>();
-            mouseLookY.axes = MouseLook.RotationAxes.MouseY;
-            mouseLookY.sensitivityX = 0f;
-            mouseLookY.sensitivityY = 1.193452f;
-            mouseLookY.minimumX = 0f;
-            mouseLookY.maximumX = 0f;
-            mouseLookY.minimumY = -80f;
-            mouseLookY.maximumY = 80f;
-
-            Keybind.Add(this, disableSteerKey);
-            Keybind.Add(this, toggleSticky);
-
-            for (int i = 0; i < throttleKeys.Length; i++)
+            if (!ES2.Exists(saveFile))
             {
-                Keybind.Add(this, throttleKeys[i]);
-            }
-
-            for (int i = 0; i < brakeKeys.Length; i++)
+                ES2.Save<string>(additionalCars, saveFile);
+            } else
             {
-                Keybind.Add(this, brakeKeys[i]);
-            }
+                List<string> data = ES2.LoadList<string>(saveFile);
 
-            for (int i = 0; i < clutchKeys.Length; i++)
-            {
-                Keybind.Add(this, clutchKeys[i]);
-            }
-
-            InitGUI();
-        }
-
-        MonoBehaviour FindMouseLook(GameObject gameobject)
-        {
-            var components = gameobject.GetComponents<MonoBehaviour>();
-            foreach (var component in components)
-            {
-                if (component.GetType().Name == "MouseLook")
+                if (data != null)
                 {
-                    return component;
+                    additionalCars = data;
+                    enabledCars.AddRange(additionalCars);
+                } else
+                {
+                    ES2.Save<string>(additionalCars, saveFile);
                 }
             }
 
-            return null;
+            InitGUI();
         }
 
         void InitGUI()
@@ -242,9 +234,15 @@ namespace AdvancedKBMControls
             Settings.AddCheckBox(this, centerMouseOnEnable);
             Settings.AddSlider(this, steeringSensitivity, 1f, 100f);
 
+            Settings.AddHeader(this, "Additional Vehicles");
+            Settings.AddText(this, "If you need to add support for custom vehicles, click the button below while in the vehicle.");
+            Settings.AddButton(this, addCurrentCarButton);
+
             Settings.AddHeader(this, "Advanced Throttle/Brake");
             Settings.AddCheckBox(this, enableAdvancedKeys);
             Settings.AddCheckBox(this, enableStickyKeys);
+            Settings.AddSlider(this, smoothThrottle, 0f, 1f);
+            Settings.AddSlider(this, smoothBrake, 0f, 1f);
 
             for (int i = 0; i < throttleSettings.Length; i++)
             {
@@ -259,10 +257,29 @@ namespace AdvancedKBMControls
             Settings.AddHeader(this, "Advanced Clutch");
             Settings.AddCheckBox(this, enableClutch);
             Settings.AddCheckBox(this, enableClutchSticky);
+            Settings.AddSlider(this, smoothClutch, 0f, 1f);
 
             for (int i = 0; i < clutchSettings.Length; i++)
             {
                 Settings.AddSlider(this, clutchSettings[i], 0f, 100f);
+            }
+
+            Keybind.Add(this, disableSteerKey);
+            Keybind.Add(this, toggleSticky);
+
+            for (int i = 0; i < throttleKeys.Length; i++)
+            {
+                Keybind.Add(this, throttleKeys[i]);
+            }
+
+            for (int i = 0; i < brakeKeys.Length; i++)
+            {
+                Keybind.Add(this, brakeKeys[i]);
+            }
+
+            for (int i = 0; i < clutchKeys.Length; i++)
+            {
+                Keybind.Add(this, clutchKeys[i]);
             }
         }
 
@@ -281,10 +298,7 @@ namespace AdvancedKBMControls
         {
             bool isSeated = FsmVariables.GlobalVariables.FindFsmString("PlayerCurrentVehicle").Value != "";
 
-            // override for ChaseCamera
-            mouseLookY.enabled = true;
-
-            if (toggleSticky.IsDown())
+            if (toggleSticky.GetKeybindDown())
             {
                 enableStickyKeys.Value = !(bool)enableStickyKeys.GetValue();
             }
@@ -294,9 +308,9 @@ namespace AdvancedKBMControls
                 steerAngle = 0f;
                 currentVehicle = player.transform.root.gameObject;
                 playerRotation = player.transform.localEulerAngles;
-                fpsCameraRotation = mouseLookY.rotationY;
+                fpsCameraRotation = (float) typeof(MouseLook).GetField("rotationY", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(mouseLookY);
 
-                if (currentVehicle.name == "BOAT")
+                if (!enabledCars.Contains(currentVehicle.name))
                 {
                     return;
                 }
@@ -306,7 +320,7 @@ namespace AdvancedKBMControls
                 if ((bool)enableMouseSteer.GetValue())
                 {
                     mouseLookX.enabled = false;
-                    mouseLookY.SetState(false);
+                    mouseLookY.enabled = false;
                     crosshair.SetActive(false);
                 }
 
@@ -345,7 +359,7 @@ namespace AdvancedKBMControls
                 {
                     crosshair.SetActive(true);
                     mouseLookX.enabled = true;
-                    mouseLookY.SetState(true);
+                    mouseLookY.enabled = true;
                 }
 
                 axisCarController = currentVehicle.GetComponent<AxisCarController>();
@@ -368,34 +382,38 @@ namespace AdvancedKBMControls
                 guiThrottle.SetActive(false);
                 guiBrake.SetActive(false);
                 guiClutch.SetActive(false);
+
+                throttleInput = 0f;
+                brakeInput = 0f;
+                clutchInput = 0f;
             }
 
             if (isDriveModeActive && !FsmVariables.GlobalVariables.FindFsmBool("PlayerInMenu").Value)
             {
-                throttleInput = 0f;
-                brakeInput = 0f;
-                clutchInput = 0f;
+                float throttleInputNew = 0f;
+                float brakeInputNew = 0f;
+                float clutchInputNew = 0f;
 
                 if ((bool)enableMouseSteer.GetValue())
                 {
-                    if (disableSteerKey.IsPressed() && !isRotateModeActive) // activate rotate mode
+                    if (disableSteerKey.GetKeybind() && !isRotateModeActive) // activate rotate mode
                     {
                         isRotateModeActive = true;
                         mouseLookX.enabled = true;
-                        mouseLookY.SetState(true);
+                        mouseLookY.enabled = true;
                         crosshair.SetActive(true);
                     }
-                    else if (!disableSteerKey.IsPressed() && isRotateModeActive) // deactivate rotate mode
+                    else if (!disableSteerKey.GetKeybind() && isRotateModeActive) // deactivate rotate mode
                     {
                         isRotateModeActive = false;
 
                         if ((bool)centerMouseOnEnable.GetValue())
                         {
                             player.transform.localEulerAngles = playerRotation;
-                            mouseLookY.rotationY = fpsCameraRotation;
+                            typeof(MouseLook).GetField("rotationY", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(mouseLookY, fpsCameraRotation);
+                            typeof(MouseLook).GetMethod("Update", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(mouseLookY, new object[] {});
                         }
 
-                        mouseLookY.UpdateAndDisable();
                         crosshair.SetActive(false);
                     }
                 }
@@ -405,12 +423,13 @@ namespace AdvancedKBMControls
                     if ((bool)enableMouseSteer.GetValue())
                     {
                         mouseLookX.enabled = false;
+                        mouseLookY.enabled = false;
 
                         float mouseMoveX = Input.GetAxis("Mouse X");
 
                         if (Mathf.Abs(mouseMoveX) > 0.01f)
                         {
-                            float sensitivity = float.Parse(steeringSensitivity.GetValue().ToString()) * 0.0002f;
+                            float sensitivity = float.Parse(steeringSensitivity.GetValue().ToString()) * 0.0005f;
 
                             steerAngle = Mathf.Clamp(steerAngle + mouseMoveX * sensitivity, -1f, 1f);
                         }
@@ -424,19 +443,19 @@ namespace AdvancedKBMControls
 
                     for (int i = 0; i < throttleSettings.Length; i++)
                     {
-                        if ((bool)enableStickyKeys.GetValue() && throttleKeys[i].IsDown() || !(bool)enableStickyKeys.GetValue() && throttleKeys[i].IsPressed())
+                        if ((bool)enableStickyKeys.GetValue() && throttleKeys[i].GetKeybindDown() || !(bool)enableStickyKeys.GetValue() && throttleKeys[i].GetKeybind())
                         {
                             hasPressedThrottle = i;
-                            throttleInput = float.Parse(throttleSettings[i].GetValue().ToString()) * 0.01f;
+                            throttleInputNew = float.Parse(throttleSettings[i].GetValue().ToString()) * 0.01f;
                         }
                     }
 
                     for (int i = 0; i < brakeSettings.Length; i++)
                     {
-                        if ((bool)enableStickyKeys.GetValue() && brakeKeys[i].IsDown() || !(bool)enableStickyKeys.GetValue() && brakeKeys[i].IsPressed())
+                        if ((bool)enableStickyKeys.GetValue() && brakeKeys[i].GetKeybindDown() || !(bool)enableStickyKeys.GetValue() && brakeKeys[i].GetKeybind())
                         {
                             hasPressedBrake = i;
-                            brakeInput = float.Parse(brakeSettings[i].GetValue().ToString()) * 0.01f;
+                            brakeInputNew = float.Parse(brakeSettings[i].GetValue().ToString()) * 0.01f;
                         }
                     }
 
@@ -446,7 +465,7 @@ namespace AdvancedKBMControls
                         {
                             if (lastPressedThrottle == hasPressedThrottle)
                             {
-                                throttleInput = 0f;
+                                throttleInputNew = 0f;
                                 lastPressedThrottle = -1;
                             }
                             else
@@ -454,19 +473,19 @@ namespace AdvancedKBMControls
                                 lastPressedThrottle = hasPressedThrottle;
                             }
 
-                            brakeInput = 0f;
+                            brakeInputNew = 0f;
                             lastPressedBrake = -1;
                         }
                         else if (lastPressedThrottle > -1)
                         {
-                            throttleInput = float.Parse(throttleSettings[lastPressedThrottle].GetValue().ToString()) * 0.01f;
+                            throttleInputNew = float.Parse(throttleSettings[lastPressedThrottle].GetValue().ToString()) * 0.01f;
                         }
 
                         if (hasPressedBrake > -1)
                         {
                             if (lastPressedBrake == hasPressedBrake)
                             {
-                                brakeInput = 0f;
+                                brakeInputNew = 0f;
                                 lastPressedBrake = -1;
                             }
                             else
@@ -474,18 +493,21 @@ namespace AdvancedKBMControls
                                 lastPressedBrake = hasPressedBrake;
                             }
 
-                            throttleInput = 0f;
+                            throttleInputNew = 0f;
                             lastPressedThrottle = -1;
                         }
                         else if (lastPressedBrake > -1)
                         {
-                            brakeInput = float.Parse(brakeSettings[lastPressedBrake].GetValue().ToString()) * 0.01f;
+                            brakeInputNew = float.Parse(brakeSettings[lastPressedBrake].GetValue().ToString()) * 0.01f;
                         }
                     } else
                     {
                         lastPressedThrottle = -1;
                         lastPressedBrake = -1;
                     }
+
+                    throttleInput = SmoothInput(throttleInput, throttleInputNew, float.Parse(smoothThrottle.GetValue().ToString()));
+                    brakeInput = SmoothInput(brakeInput, brakeInputNew, float.Parse(smoothBrake.GetValue().ToString()));
 
                     guiThrottleBar.transform.localScale = new Vector3(throttleInput, 1f, 1f);
                     guiBrakeBar.transform.localScale = new Vector3(brakeInput, 1f, 1f);
@@ -496,10 +518,10 @@ namespace AdvancedKBMControls
 
                         for (int i = 0; i < clutchSettings.Length; i++)
                         {
-                            if ((bool)enableClutchSticky.GetValue() && clutchKeys[i].IsDown() || !(bool)enableClutchSticky.GetValue() && clutchKeys[i].IsPressed())
+                            if ((bool)enableClutchSticky.GetValue() && clutchKeys[i].GetKeybindDown() || !(bool)enableClutchSticky.GetValue() && clutchKeys[i].GetKeybind())
                             {
                                 hasPressedClutch = i;
-                                clutchInput = float.Parse(clutchSettings[i].GetValue().ToString()) * 0.01f;
+                                clutchInputNew = float.Parse(clutchSettings[i].GetValue().ToString()) * 0.01f;
                             }
                         }
 
@@ -509,7 +531,7 @@ namespace AdvancedKBMControls
                             {
                                 if (lastPressedClutch == hasPressedClutch)
                                 {
-                                    clutchInput = 0f;
+                                    clutchInputNew = 0f;
                                     lastPressedClutch = -1;
                                 }
                                 else
@@ -519,12 +541,14 @@ namespace AdvancedKBMControls
                             }
                             else if (lastPressedClutch > -1)
                             {
-                                clutchInput = float.Parse(clutchSettings[lastPressedClutch].GetValue().ToString()) * 0.01f;
+                                clutchInputNew = float.Parse(clutchSettings[lastPressedClutch].GetValue().ToString()) * 0.01f;
                             }
                         } else
                         {
                             lastPressedClutch = -1;
                         }
+
+                        clutchInput = SmoothInput(clutchInput, clutchInputNew, float.Parse(smoothClutch.GetValue().ToString()));
 
                         guiClutchBar.transform.localScale = new Vector3(clutchInput, 1f, 1f);
                     }
@@ -532,8 +556,52 @@ namespace AdvancedKBMControls
             }
         }
 
+        float SmoothInput(float currentInput, float actualInput, float smooth)
+        {
+            if (actualInput > 0.0f)
+            {
+                if (actualInput < currentInput)
+                {
+                    currentInput -= Time.deltaTime / smooth;
+
+                    currentInput = Mathf.Max(currentInput, actualInput);
+                }
+                else
+                {
+                    currentInput += Time.deltaTime / smooth;
+
+                    currentInput = Mathf.Min(currentInput, actualInput);
+                }
+            }
+            else
+            {
+                currentInput -= Time.deltaTime / smooth;
+            }
+
+            return Mathf.Clamp01(currentInput);
+        }
+
         void ApplySettings()
         {
+        }
+
+        void AddCurrentCar()
+        {
+            bool isSeated = FsmVariables.GlobalVariables.FindFsmString("PlayerCurrentVehicle").Value != "";
+
+            if (isSeated)
+            {
+                currentVehicle = player.transform.root.gameObject;
+                
+                if (!enabledCars.Contains(currentVehicle.name))
+                {
+                    additionalCars.Add(currentVehicle.name);
+                    enabledCars.Add(currentVehicle.name);
+
+                    ES2.Save<string>(additionalCars, saveFile);
+                    ModConsole.Print("Vehicle Added");
+                }
+            }
         }
     }
 
@@ -543,6 +611,11 @@ namespace AdvancedKBMControls
     {
         static void Postfix(CarController __instance, Drivetrain ___drivetrain)
         {
+            if (!AdvancedKBMControls.enabledCars.Contains(__instance.gameObject.name))
+            {
+                return;
+            }
+
             //bool steerAssistance = __instance.steerAssistance;
             //bool smoothInput = __instance.smoothInput;
             if (__instance.gameObject == AdvancedKBMControls.currentVehicle)
@@ -575,6 +648,11 @@ namespace AdvancedKBMControls
     {
         static void Postfix(CarController __instance, ref int targetGear, Drivetrain ___drivetrain)
         {
+            if (!AdvancedKBMControls.enabledCars.Contains(__instance.gameObject.name))
+            {
+                return;
+            }
+
             if ((bool)AdvancedKBMControls.keyboardHShifter.GetValue())
             {
                 if (cInput.GetButtonDown("reverse"))
