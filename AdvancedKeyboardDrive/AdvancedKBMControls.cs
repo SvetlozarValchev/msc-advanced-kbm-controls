@@ -620,7 +620,7 @@ namespace AdvancedKBMControls
             //bool smoothInput = __instance.smoothInput;
             if (__instance.gameObject == AdvancedKBMControls.currentVehicle)
             {
-                if ((bool)AdvancedKBMControls.enableMouseSteer.GetValue())
+                if ((bool)AdvancedKBMControls.enableMouseSteer.GetValue() && AdvancedKBMControls.isRotateModeActive)
                 {
                     __instance.smoothInput = false;
                     __instance.steerAssistance = false;
